@@ -1,7 +1,12 @@
 # First-boot setup for the chaat-mix VM (Ubuntu 24.04). ensure.sh prepends the env file and a shebang.
-set -euxo pipefail
+set -euo pipefail
 set -a; . /etc/chaat-mix.env; set +a
+# Keep a boot log and upload it to the bucket when this script ends (success or failure): SSH is closed,
+# so <STATE_PAR_URL>/boot.log is how to see what happened.
+exec > >(tee -a /var/log/chaat-boot.log) 2>&1
+trap 'echo "boot.sh exit $?"; curl -fsS -X PUT --data-binary @/var/log/chaat-boot.log "${STATE_PAR_URL%/}/boot.log" || true' EXIT
 chmod 600 /etc/chaat-mix.env
+set -x # trace from here on: after loading the env file, so no secret lands in the log
 
 # 1 GB RAM on the free AMD shape: swap so npm install and the build don't run out of memory.
 if [ ! -f /swapfile ]; then
@@ -10,8 +15,8 @@ if [ ! -f /swapfile ]; then
 fi
 
 # Oracle's Ubuntu images block every inbound port except 22 in iptables; open web traffic.
-iptables -I INPUT 6 -m state --state NEW -p tcp --dport 80 -j ACCEPT
-iptables -I INPUT 6 -m state --state NEW -p tcp --dport 443 -j ACCEPT
+# Insert at the top: a fixed position breaks if the image ships fewer rules.
+iptables -I INPUT -m state --state NEW -p tcp -m multiport --dports 80,443 -j ACCEPT
 netfilter-persistent save
 
 # Node 24 (not 25+: SvelteKit's build logger crashes there), Caddy from Ubuntu's own archive, git.
@@ -31,10 +36,10 @@ cat > /usr/local/bin/chaat-update <<'EOF'
 set -euo pipefail
 exec 9>/run/chaat-update.lock; flock -n 9 || exit 0
 cd /opt/chaat-mix
-runuser -u chaat -- git fetch -q origin main
-[ "$(runuser -u chaat -- git rev-parse HEAD)" = "$(runuser -u chaat -- git rev-parse origin/main)" ] && [ "${1:-}" != force ] && exit 0 # as chaat: git refuses repos owned by another user
-runuser -u chaat -- git reset -q --hard origin/main
-cd app && runuser -u chaat -- npm ci --no-audit --no-fund && runuser -u chaat -- npm run build
+runuser -u chaat -- env HOME=/home/chaat git fetch -q origin main
+[ "$(runuser -u chaat -- env HOME=/home/chaat git rev-parse HEAD)" = "$(runuser -u chaat -- env HOME=/home/chaat git rev-parse origin/main)" ] && [ "${1:-}" != force ] && exit 0 # as chaat: git refuses repos owned by another user
+runuser -u chaat -- env HOME=/home/chaat git reset -q --hard origin/main
+cd app && runuser -u chaat -- env HOME=/home/chaat npm ci --no-audit --no-fund && runuser -u chaat -- env HOME=/home/chaat npm run build
 systemctl restart chaat-mix
 EOF
 
@@ -56,7 +61,7 @@ EOF
 # App
 id chaat >/dev/null 2>&1 || useradd --system --create-home --shell /usr/sbin/nologin chaat
 mkdir -p /var/lib/chaat-mix && chown chaat /var/lib/chaat-mix
-[ -d /opt/chaat-mix ] || { mkdir -p /opt/chaat-mix && chown chaat /opt/chaat-mix && runuser -u chaat -- git clone -q "$REPO_URL" /opt/chaat-mix; }
+[ -d /opt/chaat-mix ] || { mkdir -p /opt/chaat-mix && chown chaat /opt/chaat-mix && runuser -u chaat -- env HOME=/home/chaat git clone -q "$REPO_URL" /opt/chaat-mix; }
 
 cat > /etc/systemd/system/chaat-mix.service <<'EOF'
 [Unit]
