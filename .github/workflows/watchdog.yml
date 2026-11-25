@@ -36,9 +36,20 @@ jobs:
           # Rebuild a clean PEM whatever the paste did to it (real line breaks, spaces, or literal "\n"):
           # keep the BEGIN/END label, strip all whitespace and Oracle's OCI_API_KEY label from the body, re-wrap at 64.
           LABEL=$(printf '%s' "$OCI_PRIVATE_KEY" | grep -o -- '-----BEGIN [A-Z ]*-----' | head -n1 | sed 's/^-----BEGIN //; s/-----$//')
-          case "$LABEL" in *PRIVATE*) ;; *)
-            echo "OCI_PRIVATE_KEY is not a private key (found: '${LABEL:-no BEGIN line}'). Paste the whole *private* .pem file."; exit 1 ;; esac
           BODY=$(printf '%s' "$OCI_PRIVATE_KEY" | sed 's/\\n/ /g; s/-----[A-Z ]*-----//g; s/OCI_API_KEY//g' | tr -d ' \t\r\n')
+          # Body pasted without its BEGIN/END lines: every RSA private key's base64 starts with "MII".
+          [ -z "$LABEL" ] && [[ "$BODY" == MII* ]] && [ ${#BODY} -gt 1000 ] && LABEL="PRIVATE KEY"
+          case "$LABEL" in *PRIVATE*) ;; *)
+            # Describe what was pasted without printing any of it.
+            case "$OCI_PRIVATE_KEY" in
+              *PUBLIC*) WHAT="a public key" ;;
+              ocid1.*) WHAT="an OCID" ;;
+              *:*:*:*:*) WHAT="a fingerprint" ;;
+              */*.pem|*\\*.pem|*.pem) WHAT="a file path or name" ;;
+              "") WHAT="empty" ;;
+              *) WHAT="${#BODY} characters of something else" ;;
+            esac
+            echo "OCI_PRIVATE_KEY is not a private key: it looks like $WHAT. Paste the full contents of the private .pem file."; exit 1 ;; esac
           { echo "-----BEGIN $LABEL-----"; fold -w64 <<< "$BODY"; echo "-----END $LABEL-----"; } > ~/.oci/key.pem
           echo "Key: $LABEL, $(wc -l < ~/.oci/key.pem) lines after re-wrapping" # safe: no key material
           printf '[DEFAULT]\nuser=%s\ntenancy=%s\nfingerprint=%s\nregion=%s\nkey_file=%s\n' \
