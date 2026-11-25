@@ -4,7 +4,15 @@ import { flush, publish, since } from './hub';
 import { consumeState, issueState } from './oauth';
 import { load, save } from './state';
 import { shouldRestart, toChatEvent as twitchEvent } from './twitch';
-import { toChatEvent as youtubeEvent } from './youtube';
+import { restType, toChatEvent as youtubeEvent } from './youtube';
+
+describe('youtube push stream', () => {
+	it('maps gRPC enum names to the REST names the mapper knows', () => {
+		expect(restType('SUPER_CHAT_EVENT')).toBe('superChatEvent');
+		expect(restType('TEXT_MESSAGE_EVENT')).toBe('textMessageEvent');
+		expect(restType('MEMBER_MILESTONE_CHAT_EVENT')).toBe('memberMilestoneChatEvent');
+	});
+});
 
 // writeFile fails once, then works: simulates a brief storage error
 const fs = vi.hoisted(() => ({ fail: false }));

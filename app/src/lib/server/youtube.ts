@@ -1,3 +1,6 @@
+import { resolve } from 'node:path';
+import * as grpc from '@grpc/grpc-js';
+import * as protoLoader from '@grpc/proto-loader';
 import { env } from '#lib/server/env.ts';
 import type { ChatEvent } from '#lib/types.ts';
 import { publish, setStatus } from './hub';
@@ -44,9 +47,60 @@ export function toChatEvent(m: any): ChatEvent | undefined {
 let liveChatId: string | undefined;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+let client: any;
+function streamClient() {
+	if (client) return client;
+	// proto/stream_list.proto is Google's file from the "Streaming Live Chat" guide; cwd is the app folder.
+	const def = protoLoader.loadSync(resolve('proto/stream_list.proto'), { keepCase: false, longs: String, enums: String, defaults: false });
+	const pkg: any = grpc.loadPackageDefinition(def);
+	client = new pkg.youtube.api.v3.V3DataLiveChatMessageService('youtube.googleapis.com:443', grpc.credentials.createSsl());
+	return client;
+}
+
+/** gRPC enum names → the REST names toChatEvent knows: SUPER_CHAT_EVENT → superChatEvent. */
+export const restType = (t: string) => t.toLowerCase().replace(/_(\w)/g, (_, c: string) => c.toUpperCase());
+
 /**
- * shortcut: polls liveChatMessages.list, spreading the day's quota over STREAM_HOURS (~25 s between polls).
- * Upgrade to streamList over gRPC (push, ~5 units per connection) once Google's stream_list.proto is added.
+ * Push stream (liveChatMessages.streamList): YouTube sends messages as they arrive. Each connection costs 5 units;
+ * when YouTube closes it we reconnect with the last page token so nothing is missed. Resolves when the chat goes offline.
+ */
+async function streamChat(chatId: string) {
+	let pageToken: string | undefined;
+	let failures = 0;
+	while (liveChatId === chatId) {
+		spend(5);
+		const offline = await new Promise<boolean>((done, fail) => {
+			const md = new grpc.Metadata();
+			md.set('x-goog-api-key', env.YOUTUBE_API_KEY!);
+			const call = streamClient().StreamList({ liveChatId: chatId, part: ['snippet', 'authorDetails'], maxResults: 2000, ...(pageToken && { pageToken }) }, md);
+			call.on('data', (res: any) => {
+				failures = 0;
+				for (const m of res.items ?? []) {
+					const ev = toChatEvent({ ...m, snippet: { ...m.snippet, type: restType(m.snippet?.type ?? '') } });
+					if (ev) publish(ev);
+				}
+				if (res.nextPageToken) pageToken = res.nextPageToken;
+				if (res.offlineAt) {
+					call.cancel();
+					done(true);
+				}
+			});
+			call.on('end', () => done(false));
+			call.on('error', (e: grpc.ServiceError) => (e.code === grpc.status.CANCELLED ? done(true) : fail(e)));
+		}).catch((e) => {
+			if (++failures >= 3) throw e;
+			return false;
+		});
+		if (offline) return;
+		await sleep(2000 * Math.max(failures, 1)); // never reconnect in a tight loop: each connection costs 5 units
+	}
+}
+
+const REFUSED = [grpc.status.UNAUTHENTICATED, grpc.status.PERMISSION_DENIED, grpc.status.UNIMPLEMENTED, grpc.status.INVALID_ARGUMENT];
+
+/**
+ * Fallback when the push stream is refused: polls liveChatMessages.list, spreading the day's quota over
+ * STREAM_HOURS (~25 s between polls).
  */
 async function readChat(chatId: string) {
 	let pageToken = '';
@@ -75,8 +129,14 @@ export async function start() {
 				continue;
 			}
 			setStatus({ platform: 'youtube', state: 'live' });
-			await readChat(liveChatId);
+			const chatId = liveChatId;
+			await streamChat(chatId).catch((e: grpc.ServiceError) => {
+				if (!REFUSED.includes(e.code)) throw e;
+				console.warn(`YouTube push stream refused (${e.details}); polling instead.`);
+				return readChat(chatId);
+			});
 		} catch (e: any) {
+			console.error('YouTube chat error:', e.code ?? '', e.details ?? e.message);
 			const quota = e.reason === 'quotaExceeded';
 			setStatus({
 				platform: 'youtube',
