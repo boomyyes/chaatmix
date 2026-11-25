@@ -1,0 +1,36 @@
+# Secrets: this repo is public
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+crash.log
+
+# Node / SvelteKit
+node_modules/
+.svelte-kit/
+build/
+
+# Impeccable runtime (committed config lives elsewhere under .impeccable/)
+.impeccable/config.local.json
+
+# App runtime state (tokens)
+state*.json
+
+# Local AI tool folders (not part of the app)
+.agent/
+.agents/
+.opencode/
+.gemini/
+.remember/
+.claude/skills/
+.claude/agents/
+.claude/settings.local.json
+hook.cache.json

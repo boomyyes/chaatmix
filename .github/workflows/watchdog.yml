@@ -1,0 +1,72 @@
+name: watchdog
+
+on:
+  schedule:
+    - cron: '*/30 * * * *' # keep the VM alive: create, start or reboot as needed
+    - cron: '0 3 1 * *' # monthly heartbeat: GitHub disables schedules after 60 days without repo activity
+  workflow_dispatch:
+    inputs:
+      recreate:
+        description: 'Terminate and rebuild the VM (needed after changing any secret)'
+        type: boolean
+        default: false
+
+concurrency:
+  group: watchdog
+  cancel-in-progress: false
+
+jobs:
+  ensure:
+    if: github.event.schedule != '0 3 1 * *'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Oracle CLI
+        env:
+          OCI_USER_OCID: ${{ secrets.OCI_USER_OCID }}
+          OCI_TENANCY_OCID: ${{ secrets.OCI_TENANCY_OCID }}
+          OCI_FINGERPRINT: ${{ secrets.OCI_FINGERPRINT }}
+          OCI_REGION: ${{ secrets.OCI_REGION }}
+          OCI_PRIVATE_KEY: ${{ secrets.OCI_PRIVATE_KEY }}
+        run: |
+          pipx install oci-cli
+          mkdir -p ~/.oci
+          printf '%s\n' "$OCI_PRIVATE_KEY" > ~/.oci/key.pem
+          printf '[DEFAULT]\nuser=%s\ntenancy=%s\nfingerprint=%s\nregion=%s\nkey_file=%s\n' \
+            "$OCI_USER_OCID" "$OCI_TENANCY_OCID" "$OCI_FINGERPRINT" "$OCI_REGION" ~/.oci/key.pem > ~/.oci/config
+          chmod 600 ~/.oci/key.pem ~/.oci/config
+
+      - name: Ensure VM
+        env:
+          RECREATE: ${{ inputs.recreate || false }}
+          OCI_CLI_SUPPRESS_FILE_PERMISSIONS_WARNING: 'True'
+          OCI_COMPARTMENT_OCID: ${{ secrets.OCI_COMPARTMENT_OCID }}
+          REPO_URL: https://github.com/${{ github.repository }}.git
+          PUBLIC_URL: ${{ secrets.PUBLIC_URL }}
+          ACCESS_SECRET: ${{ secrets.ACCESS_SECRET }}
+          YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
+          YOUTUBE_CHANNEL_ID: ${{ secrets.YOUTUBE_CHANNEL_ID }}
+          GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+          TWITCH_CLIENT_ID: ${{ secrets.TWITCH_CLIENT_ID }}
+          TWITCH_CLIENT_SECRET: ${{ secrets.TWITCH_CLIENT_SECRET }}
+          DUCKDNS_SUBDOMAIN: ${{ secrets.DUCKDNS_SUBDOMAIN }}
+          DUCKDNS_TOKEN: ${{ secrets.DUCKDNS_TOKEN }}
+          STATE_PAR_URL: ${{ secrets.STATE_PAR_URL }}
+        run: bash infra/ensure.sh
+
+  heartbeat:
+    if: github.event.schedule == '0 3 1 * *'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          date -u +%Y-%m-%d > .github/heartbeat
+          git config user.name 'chaat-mix watchdog'
+          git config user.email 'actions@users.noreply.github.com'
+          git add .github/heartbeat
+          git commit -m 'chore: monthly heartbeat' && git push
