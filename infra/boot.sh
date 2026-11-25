@@ -81,7 +81,7 @@ WantedBy=multi-user.target
 EOF
 systemctl daemon-reload
 systemctl enable chaat-mix
-/usr/local/bin/chaat-update force
+/usr/local/bin/chaat-update force || echo "first build failed: cron retries every 5 min" # still set up Caddy below
 
 # Caddy: restore saved certificates first, then serve HTTPS in front of the app.
 if curl -fsS "${STATE_PAR_URL%/}/caddy.tgz" -o /tmp/caddy.tgz; then
