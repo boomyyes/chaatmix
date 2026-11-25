@@ -35,9 +35,9 @@ EOF
 cat > /usr/local/bin/chaat-update <<'EOF'
 #!/bin/bash
 set -euo pipefail
-cd /opt/chaat-mix # as chaat: git refuses repos owned by another user
-runuser -u chaat -- env HOME=/home/chaat git fetch -q origin deploy:refs/remotes/origin/deploy
-runuser -u chaat -- env HOME=/home/chaat git show origin/deploy:infra/update.sh > /run/chaat-update.sh
+cd /opt/chaat-mix # root-owned: the app user must not be able to change what root runs
+git fetch -q origin deploy:refs/remotes/origin/deploy
+git show origin/deploy:infra/update.sh > /run/chaat-update.sh
 exec bash /run/chaat-update.sh "$@"
 EOF
 
@@ -58,8 +58,8 @@ EOF
 
 # App
 id chaat >/dev/null 2>&1 || useradd --system --create-home --shell /usr/sbin/nologin chaat
-mkdir -p /var/lib/chaat-mix /opt/chaat-mix-releases && chown chaat /var/lib/chaat-mix /opt/chaat-mix-releases
-[ -d /opt/chaat-mix ] || { mkdir -p /opt/chaat-mix && chown chaat /opt/chaat-mix && runuser -u chaat -- env HOME=/home/chaat git clone -q "$REPO_URL" /opt/chaat-mix; }
+mkdir -p /var/lib/chaat-mix /opt/chaat-mix-releases && chown chaat /var/lib/chaat-mix # releases dir stays root-owned
+[ -d /opt/chaat-mix ] || git clone -q "$REPO_URL" /opt/chaat-mix
 
 cat > /etc/systemd/system/chaat-mix.service <<'EOF'
 [Unit]

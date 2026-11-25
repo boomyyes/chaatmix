@@ -8,7 +8,7 @@ as() { runuser -u chaat -- env HOME=/home/chaat "$@"; }
 SRC=/opt/chaat-mix REL=/opt/chaat-mix-releases CUR=/opt/chaat-mix-current
 health() { curl -fsS --max-time 5 http://127.0.0.1:3000/health; }
 
-SHA=$(cd "$SRC" && as git rev-parse origin/deploy)
+SHA=$(git -C "$SRC" rev-parse origin/deploy)
 DIR=$REL/$SHA
 OLD=$(readlink "$CUR" || true)
 [ "$OLD" = "$DIR" ] && exit 0
@@ -18,7 +18,7 @@ if [ "${1:-}" != force ] && health | grep -q '"state":"live"'; then echo "$(date
 if [ ! -f "$DIR/app/build/index.js" ]; then
 	echo "$(date) building $SHA"
 	rm -rf "$DIR" && mkdir -p "$DIR" && chown chaat "$DIR"
-	(cd "$SRC" && as git archive "$SHA") | as tar -x -C "$DIR"
+	git -C "$SRC" archive "$SHA" | as tar -x -C "$DIR"
 	(cd "$DIR/app" && as npm ci --no-audit --no-fund && as npm run build) || { touch "$DIR.failed"; exit 1; }
 fi
 
@@ -33,4 +33,5 @@ if ! health > /dev/null 2>&1; then
 fi
 echo "$(date) running $SHA"
 # Keep the running release and the one before it (the rollback target).
-ls -1dt "$REL"/*/ | tail -n +3 | xargs -r rm -rf
+# $REL is root-owned, so only update.sh creates entries in it.
+for d in $(ls -1dt "$REL"/*/ | tail -n +3); do if [ "${d%/}" != "$OLD" ]; then rm -rf -- "${d%/}"; fi; done

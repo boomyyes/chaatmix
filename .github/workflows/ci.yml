@@ -10,7 +10,7 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   test:
@@ -21,6 +21,8 @@ jobs:
         working-directory: app
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false # dependency install scripts never see a push token
       - uses: actions/setup-node@v4
         with:
           node-version: 24
@@ -30,5 +32,12 @@ jobs:
       - run: npm run check
       - run: npm test
       - run: npm run build
-      - name: Release to the VM
-        run: git push --force origin HEAD:refs/heads/deploy
+
+  release:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - run: git push --force origin HEAD:refs/heads/deploy
