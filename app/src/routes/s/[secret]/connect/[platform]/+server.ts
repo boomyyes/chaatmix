@@ -5,7 +5,8 @@ import * as youtube from '#lib/server/youtube.ts';
 import type { RequestHandler } from './$types';
 
 export const GET: RequestHandler = ({ params, cookies }) => {
-	if (params.platform === 'twitch') redirect(303, twitch.authUrl(issueState('twitch', cookies)));
-	if (params.platform === 'youtube') redirect(303, youtube.authUrl(issueState('youtube', cookies)));
+	// SvelteKit 3 blocks external redirects unless the target origin is allowed explicitly.
+	if (params.platform === 'twitch') redirect(303, twitch.authUrl(issueState('twitch', cookies)), { external: ['https://id.twitch.tv'] });
+	if (params.platform === 'youtube') redirect(303, youtube.authUrl(issueState('youtube', cookies)), { external: ['https://accounts.google.com'] });
 	error(404);
 };
