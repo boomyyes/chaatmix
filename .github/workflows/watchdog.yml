@@ -33,7 +33,12 @@ jobs:
         run: |
           pipx install oci-cli
           mkdir -p ~/.oci
-          printf '%s\n' "$OCI_PRIVATE_KEY" > ~/.oci/key.pem
+          # Accept the key pasted with real line breaks or as one line with literal "\n"; drop Oracle's label line.
+          printf '%b\n' "${OCI_PRIVATE_KEY//\\n/\\n}" | tr -d '\r' | grep -v '^OCI_API_KEY$' > ~/.oci/key.pem
+          # Safe to show: only the header and size, never the key itself.
+          echo "Key header: $(head -n1 ~/.oci/key.pem)  ($(wc -l < ~/.oci/key.pem) lines)"
+          grep -q -- '-----BEGIN .*PRIVATE KEY-----' ~/.oci/key.pem || {
+            echo "OCI_PRIVATE_KEY is not a private key. Paste the whole *private* .pem file (not the public one)."; exit 1; }
           printf '[DEFAULT]\nuser=%s\ntenancy=%s\nfingerprint=%s\nregion=%s\nkey_file=%s\n' \
             "$OCI_USER_OCID" "$OCI_TENANCY_OCID" "$OCI_FINGERPRINT" "$OCI_REGION" ~/.oci/key.pem > ~/.oci/config
           chmod 600 ~/.oci/key.pem ~/.oci/config
@@ -42,6 +47,7 @@ jobs:
         env:
           RECREATE: ${{ inputs.recreate || false }}
           OCI_CLI_SUPPRESS_FILE_PERMISSIONS_WARNING: 'True'
+          SUPPRESS_LABEL_WARNING: 'True'
           OCI_COMPARTMENT_OCID: ${{ secrets.OCI_COMPARTMENT_OCID }}
           REPO_URL: https://github.com/${{ github.repository }}.git
           PUBLIC_URL: ${{ secrets.PUBLIC_URL }}
