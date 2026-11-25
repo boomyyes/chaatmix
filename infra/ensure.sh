@@ -2,6 +2,8 @@
 # Idempotent: creates whatever is missing, starts a stopped VM, soft-reboots an unhealthy one.
 # Run by .github/workflows/watchdog.yml. Needs the oci CLI already configured, plus jq and curl.
 set -euo pipefail
+# Say which command failed (GitHub masks any secret in it): a bare exit code is undebuggable.
+trap 'echo "ensure.sh failed (exit $?) at line $LINENO: $BASH_COMMAND"' ERR
 cd "$(dirname "$0")"
 
 NAME=chaat-mix
@@ -46,7 +48,8 @@ INST=$(instance)
 
 if [ "${RECREATE:-false}" = true ] && [ -n "$INST" ]; then
 	echo "Recreating: terminating the current VM."
-	oci compute instance terminate --instance-id "$(jq -r .id <<< "$INST")" --force --wait-for-state TERMINATED > /dev/null
+	oci compute instance terminate --instance-id "$(jq -r .id <<< "$INST")" --force
+	for _ in $(seq 1 40); do [ -z "$(instance)" ] && break; sleep 15; done # wait up to 10 min for it to be gone
 	INST=""
 fi
 
