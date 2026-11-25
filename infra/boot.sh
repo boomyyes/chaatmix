@@ -30,17 +30,15 @@ set -a; . /etc/chaat-mix.env; set +a
 curl -fsS "https://www.duckdns.org/update?domains=${DUCKDNS_SUBDOMAIN}&token=${DUCKDNS_TOKEN}&ip=" > /dev/null
 EOF
 
-# Pull and rebuild when main changes; the VM updates itself, so nothing needs SSH.
+# Follow the `deploy` branch (CI-tested commits only); the VM updates itself, so nothing needs SSH.
+# The real logic is infra/update.sh, run from the fetched commit so update fixes ship without a rebuild.
 cat > /usr/local/bin/chaat-update <<'EOF'
 #!/bin/bash
 set -euo pipefail
-exec 9>/run/chaat-update.lock; flock -n 9 || exit 0
-cd /opt/chaat-mix
-runuser -u chaat -- env HOME=/home/chaat git fetch -q origin main
-[ "$(runuser -u chaat -- env HOME=/home/chaat git rev-parse HEAD)" = "$(runuser -u chaat -- env HOME=/home/chaat git rev-parse origin/main)" ] && [ "${1:-}" != force ] && exit 0 # as chaat: git refuses repos owned by another user
-runuser -u chaat -- env HOME=/home/chaat git reset -q --hard origin/main
-cd app && runuser -u chaat -- env HOME=/home/chaat npm ci --no-audit --no-fund && runuser -u chaat -- env HOME=/home/chaat npm run build
-systemctl restart chaat-mix
+cd /opt/chaat-mix # as chaat: git refuses repos owned by another user
+runuser -u chaat -- env HOME=/home/chaat git fetch -q origin deploy:refs/remotes/origin/deploy
+runuser -u chaat -- env HOME=/home/chaat git show origin/deploy:infra/update.sh > /run/chaat-update.sh
+exec bash /run/chaat-update.sh "$@"
 EOF
 
 # Back up Caddy's certificates daily so a rebuild reuses them (Let's Encrypt: 5 duplicate certs per 7 days).
@@ -60,7 +58,7 @@ EOF
 
 # App
 id chaat >/dev/null 2>&1 || useradd --system --create-home --shell /usr/sbin/nologin chaat
-mkdir -p /var/lib/chaat-mix && chown chaat /var/lib/chaat-mix
+mkdir -p /var/lib/chaat-mix /opt/chaat-mix-releases && chown chaat /var/lib/chaat-mix /opt/chaat-mix-releases
 [ -d /opt/chaat-mix ] || { mkdir -p /opt/chaat-mix && chown chaat /opt/chaat-mix && runuser -u chaat -- env HOME=/home/chaat git clone -q "$REPO_URL" /opt/chaat-mix; }
 
 cat > /etc/systemd/system/chaat-mix.service <<'EOF'
@@ -71,7 +69,7 @@ Wants=network-online.target
 
 [Service]
 User=chaat
-WorkingDirectory=/opt/chaat-mix/app
+WorkingDirectory=/opt/chaat-mix-current/app
 EnvironmentFile=/etc/chaat-mix.env
 Environment=HOST=127.0.0.1 PORT=3000 STATE_FILE=/var/lib/chaat-mix/state.json
 ExecStart=/usr/bin/node build

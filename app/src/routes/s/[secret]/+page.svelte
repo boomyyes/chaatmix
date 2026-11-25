@@ -128,7 +128,7 @@
 		es.addEventListener('status', (m) => (statuses = JSON.parse(m.data)));
 		es.onopen = () => (online = true);
 		es.onerror = () => (online = false);
-		const clock = setInterval(() => (now = Date.now()), 15_000);
+		const clock = setInterval(() => (now = Date.now()), 1_000);
 
 		// keep the screen on while the app is open
 		let lock: { release(): Promise<void> } | undefined;
