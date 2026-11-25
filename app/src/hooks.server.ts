@@ -12,9 +12,11 @@ export const init: ServerInit = () => {
 	youtube.start();
 };
 
-/** Everything under /s/<secret>/ requires the access secret; anything else there is a plain 404. */
+/**
+ * Everything under /s/<secret>/ requires the access secret; anything else there is a plain 404.
+ * Checks the route the router actually matched, not the raw path: "/%73/x/…" decodes to "/s/x/…".
+ */
 export const handle: Handle = async ({ event, resolve }) => {
-	const [, first, secret] = event.url.pathname.split('/');
-	if (first === 's' && !safeEqual(secret ?? '', env.ACCESS_SECRET!)) error(404);
+	if (event.route.id?.startsWith('/s/[secret]') && !safeEqual(event.params.secret ?? '', env.ACCESS_SECRET!)) error(404);
 	return resolve(event);
 };
