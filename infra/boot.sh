@@ -36,7 +36,7 @@ cat > /usr/local/bin/chaat-update <<'EOF'
 #!/bin/bash
 set -euo pipefail
 cd /opt/chaat-mix # root-owned: the app user must not be able to change what root runs
-git fetch -q origin deploy:refs/remotes/origin/deploy
+git fetch -q origin +deploy:refs/remotes/origin/deploy # +: CI force-pushes deploy
 git show origin/deploy:infra/update.sh > /run/chaat-update.sh
 exec bash /run/chaat-update.sh "$@"
 EOF
@@ -51,7 +51,7 @@ chmod 755 /usr/local/bin/chaat-duckdns /usr/local/bin/chaat-update /usr/local/bi
 
 cat > /etc/cron.d/chaat-mix <<'EOF'
 */5 * * * * root /usr/local/bin/chaat-duckdns
-*/5 * * * * root /usr/local/bin/chaat-update >> /var/log/chaat-update.log 2>&1
+*/5 * * * * root /usr/local/bin/chaat-update > /dev/null 2>&1 # logs itself
 17 4 * * * root /usr/local/bin/chaat-backup-certs
 EOF
 /usr/local/bin/chaat-duckdns || true

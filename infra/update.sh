@@ -4,6 +4,10 @@
 # running, waits until no stream is live, switches over, and switches back if the new version doesn't come up.
 set -euo pipefail
 exec 9>/run/chaat-update.lock; flock -n 9 || exit 0
+# SSH is closed: keep the log and upload it to the bucket (<STATE_PAR_URL>/update.log) whenever this runs past the no-op checks.
+set -a; . /etc/chaat-mix.env; set +a
+exec > >(tee -a /var/log/chaat-update.log) 2>&1
+upload() { tail -n 300 /var/log/chaat-update.log | curl -fsS -X PUT --data-binary @- "${STATE_PAR_URL%/}/update.log" > /dev/null || true; }
 as() { runuser -u chaat -- env HOME=/home/chaat "$@"; }
 SRC=/opt/chaat-mix REL=/opt/chaat-mix-releases CUR=/opt/chaat-mix-current
 health() { curl -fsS --max-time 5 http://127.0.0.1:3000/health; }
@@ -13,15 +17,19 @@ DIR=$REL/$SHA
 OLD=$(readlink "$CUR" || true)
 [ "$OLD" = "$DIR" ] && exit 0
 [ -f "$DIR.failed" ] && exit 0 # tried and rolled back: wait for the next commit
-if [ "${1:-}" != force ] && health | grep -q '"state":"live"'; then echo "$(date) $SHA waits: a stream is live"; exit 0; fi
+live() { [ "${1:-}" != force ] && health | grep -q '"state":"live"'; }
+if live "${1:-}"; then echo "$(date) $SHA waits: a stream is live"; exit 0; fi
+trap upload EXIT
 
 if [ ! -f "$DIR/app/build/index.js" ]; then
 	echo "$(date) building $SHA"
 	rm -rf "$DIR" && mkdir -p "$DIR" && chown chaat "$DIR"
 	git -C "$SRC" archive "$SHA" | as tar -x -C "$DIR"
-	(cd "$DIR/app" && as npm ci --no-audit --no-fund && as npm run build) || { touch "$DIR.failed"; exit 1; }
+	(cd "$DIR/app" && as npm ci --no-audit --no-fund && as npm run build) || exit 1 # CI passed, so this is likely transient (network, memory): retry next run
 fi
 
+# The build takes minutes: a stream may have started meanwhile.
+if live "${1:-}"; then echo "$(date) $SHA built, waits: a stream went live"; exit 0; fi
 ln -sfn "$DIR" "$CUR.new" && mv -Tf "$CUR.new" "$CUR"
 systemctl restart chaat-mix
 for _ in $(seq 1 30); do health > /dev/null 2>&1 && break; sleep 2; done
