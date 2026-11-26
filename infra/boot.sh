@@ -8,6 +8,9 @@ trap 'echo "boot.sh exit $?"; curl -fsS -X PUT --data-binary @/var/log/chaat-boo
 chmod 600 /etc/chaat-mix.env
 set -x # trace from here on: after loading the env file, so no secret lands in the log
 
+# ensure.sh attaches the reserved public IP just after launch; until then there is no internet. Wait up to 10 min.
+for _ in $(seq 1 120); do curl -fsS -m 5 -o /dev/null https://deb.nodesource.com && break; sleep 5; done
+
 # 1 GB RAM on the free AMD shape: swap so npm install and the build don't run out of memory.
 if [ ! -f /swapfile ]; then
 	fallocate -l 2G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile

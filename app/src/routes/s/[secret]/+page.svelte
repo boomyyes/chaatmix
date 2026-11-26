@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount, tick, untrack } from 'svelte';
+	import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 	import { page } from '$app/state';
 	import type { ChatEvent, Platform, SourceStatus } from '#lib/types.ts';
 	import type { PageProps } from './$types';
@@ -54,6 +55,7 @@
 	}
 
 	async function add(e: ChatEvent) {
+		if (messages.some((m) => key(m) === key(e))) return; // a restarted server re-sends recent YouTube messages
 		const last = messages.at(-1);
 		messages.push(e);
 		if (last && Date.parse(e.ts) < Date.parse(last.ts)) messages.sort((a, b) => Date.parse(a.ts) - Date.parse(b.ts));
@@ -112,19 +114,37 @@
 		}
 	}
 
-	// Neither platform's API has like or heart for chat, so "thanks" is a one-tap reply.
-	let thanked = $state(new Set<string>());
-	async function thank(e: ChatEvent) {
+	// Neither platform's API has like or heart for chat, so "thanks" is a reply. It posts publicly, so it waits
+	// 3 s first and a second tap undoes it: the heart sits right next to the pin button.
+	const thanked = new SvelteSet<string>();
+	const waiting = new SvelteMap<string, ReturnType<typeof setTimeout>>();
+	function thank(e: ChatEvent) {
 		if (e.platform === 'youtube' && !data.youtubeReplies) return startReply(e); // shows the connect button
+		const k = key(e);
+		const timer = waiting.get(k);
+		if (timer) {
+			clearTimeout(timer);
+			waiting.delete(k);
+			announce = `Thanks to ${e.author} cancelled`;
+			return;
+		}
+		waiting.set(
+			k,
+			setTimeout(() => {
+				waiting.delete(k);
+				sendThanks(e);
+			}, 3000)
+		);
+	}
+	async function sendThanks(e: ChatEvent) {
 		thanked.add(key(e));
-		thanked = new Set(thanked);
 		const res = await fetch(`${base}reply`, {
 			method: 'POST',
 			body: JSON.stringify({ platform: e.platform, messageId: e.id, author: e.author, text: `${e.platform === 'youtube' ? `@${e.author} ` : ''}thank you ❤️` })
 		}).catch(() => undefined);
-		if (!res?.ok) {
+		if (res?.ok) announce = `Thanks sent to ${e.author}`;
+		else {
 			thanked.delete(key(e));
-			thanked = new Set(thanked);
 			startReply(e);
 			replyError = (await res?.json().catch(() => undefined))?.error ?? 'Thanks did not send. Try again or type a reply.';
 		}
@@ -148,9 +168,18 @@
 		dragStart = null;
 		dragY = 0;
 	}
+	// Focus moves into the sheet when it opens and back to the pins button when it closes.
+	let pinsBtn = $state<HTMLButtonElement>();
+	let closeBtn = $state<HTMLButtonElement>();
+	async function openPins() {
+		showPins = true;
+		await tick();
+		closeBtn?.focus();
+	}
 	function closePins() {
 		showPins = false;
 		expanded = false;
+		pinsBtn?.focus();
 	}
 
 	function cycleTextSize() {
@@ -219,6 +248,7 @@
 {/snippet}
 
 {#snippet paidCard(e: ChatEvent)}
+	{@const k = key(e)}
 	<div class="paid">
 		{@render icon(e.platform)}
 		<div class="paid-body">
@@ -227,8 +257,18 @@
 			{#if e.text}<span class="text">{@render words(e)}</span>{/if}
 		</div>
 		<div class="actions">
-			<button class="icon-btn heart" class:done={thanked.has(key(e))} aria-label="Thank {e.author}" aria-pressed={thanked.has(key(e))} disabled={thanked.has(key(e))} onclick={() => thank(e)}>
-				<svg width="20" height="20" viewBox="0 0 24 24" fill={thanked.has(key(e)) ? 'currentColor' : 'none'} stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><path d="M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10z" /></svg>
+			<button
+				class="icon-btn heart"
+				class:done={thanked.has(k)}
+				class:waiting={waiting.has(k)}
+				aria-label={waiting.has(k) ? `Undo thanks to ${e.author}` : thanked.has(k) ? `Thanked ${e.author}` : `Thank ${e.author}`}
+				aria-pressed={thanked.has(k)}
+				disabled={thanked.has(k)}
+				onclick={() => thank(e)}
+			>
+				{#if waiting.has(k)}<span class="undo">UNDO</span>{:else}
+					<svg width="20" height="20" viewBox="0 0 24 24" fill={thanked.has(k) ? 'currentColor' : 'none'} stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><path d="M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10z" /></svg>
+				{/if}
 			</button>
 			<button class="icon-btn" aria-label="{pinned.has(key(e)) ? 'Unpin' : 'Pin'} message from {e.author}" aria-pressed={pinned.has(key(e))} onclick={() => togglePin(e)}>
 				{@render pinIcon(pinned.has(key(e)))}
@@ -256,7 +296,7 @@
 			{/each}
 			<div class="grow"></div>
 			<button class="box-btn" aria-label="Text size" onclick={cycleTextSize}>Aa</button>
-			<button class="box-btn pins-btn" aria-label="Pinned messages, {pins.length}" aria-expanded={showPins} onclick={() => (showPins = true)}>
+			<button class="box-btn pins-btn" aria-label="Pinned messages, {pins.length}" aria-expanded={showPins} bind:this={pinsBtn} onclick={openPins}>
 				{@render pinIcon(false)}{pins.length}
 			</button>
 		</div>
@@ -273,7 +313,7 @@
 			</div>
 		</main>
 	{:else}
-		<main class="feed" role="log" aria-label="Chat" aria-live="off" bind:this={feed} onscroll={onScroll}>
+		<main class="feed" role="log" aria-label="Chat" aria-live="off" inert={showPins} bind:this={feed} onscroll={onScroll}>
 			{#each messages as e (key(e))}
 				{#if isPaid(e)}
 					{@render paidCard(e)}
@@ -342,6 +382,7 @@
 		style:transform={showPins ? `translateY(${dragY}px)` : undefined}
 		role="dialog"
 		aria-label="Pinned messages"
+		aria-modal="true"
 		inert={!showPins}
 	>
 		<!-- svelte-ignore a11y_no_static_element_interactions (drag is a touch shortcut; the close button and Escape cover keyboard and screen readers) -->
@@ -350,7 +391,7 @@
 			<div class="sheet-head">
 				<h2>PINNED // {pins.length}</h2>
 				{#if pins.length}<button class="box-btn clear" onpointerdown={(ev) => ev.stopPropagation()} onclick={clearPins}>CLEAR ALL</button>{/if}
-				<button class="icon-btn muted" aria-label="Close pinned messages" onpointerdown={(ev) => ev.stopPropagation()} onclick={closePins}>
+				<button class="icon-btn muted" aria-label="Close pinned messages" bind:this={closeBtn} onpointerdown={(ev) => ev.stopPropagation()} onclick={closePins}>
 					<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
 				</button>
 			</div>
@@ -813,6 +854,13 @@
 	}
 	.heart.done {
 		color: var(--yt);
+	}
+	.heart.waiting {
+		color: var(--warn);
+	}
+	.undo {
+		font: 700 11px var(--mono);
+		letter-spacing: 0.04em;
 	}
 	.heart:not(.done):active svg {
 		transform: scale(1.3);

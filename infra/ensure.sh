@@ -39,6 +39,25 @@ SUBNET=$(first network subnet list -c "$C" --vcn-id "$VCN")
 [ -n "$SUBNET" ] || SUBNET=$(oci network subnet create -c "$C" --vcn-id "$VCN" --display-name "$NAME" \
 	--cidr-block 10.0.0.0/24 --wait-for-state AVAILABLE --query 'data.id' --raw-output)
 
+# ---- Reserved public IP: the address survives rebuilds, so phones and DNS caches never point at a dead IP ----
+RIP=$(oci network public-ip list -c "$C" --scope REGION --lifetime RESERVED --all \
+	--query "data[?\"display-name\"=='$NAME'].id | [0]" --raw-output 2>/dev/null || true)
+[ -n "$RIP" ] && [ "$RIP" != null ] || RIP=$(oci network public-ip create -c "$C" --lifetime RESERVED --display-name "$NAME" \
+	--query data.id --raw-output 2>/dev/null || true) # shortcut: the free tier allows about one; on failure fall back to an ephemeral IP
+
+# Move the reserved IP onto the instance's primary private IP (dropping its ephemeral one). No-op when already there.
+attach_ip() {
+	[ -n "$RIP" ] || return 0
+	local vnic pip cur
+	vnic=$(oci compute instance list-vnics --instance-id "$1" --query 'data[0].id' --raw-output)
+	pip=$(oci network private-ip list --vnic-id "$vnic" --query 'data[0].id' --raw-output)
+	[ "$(oci network public-ip get --public-ip-id "$RIP" --query 'data."private-ip-id"' --raw-output)" = "$pip" ] && return 0
+	cur=$(oci network public-ip get --private-ip-id "$pip" --query data.id --raw-output 2>/dev/null || true)
+	[ -n "$cur" ] && oci network public-ip delete --public-ip-id "$cur" --force
+	oci network public-ip update --public-ip-id "$RIP" --private-ip-id "$pip" > /dev/null
+	echo "Reserved IP attached; DuckDNS follows within 5 minutes."
+}
+
 # ---- Instance ----
 instance() {
 	oci compute instance list -c "$C" --display-name "$NAME" \
@@ -67,11 +86,13 @@ if [ -z "$INST" ]; then
 		--shape "$SHAPE" --sort-by TIMECREATED --sort-order DESC)
 	# The free AMD shape exists in only one availability domain, and capacity comes and goes: try each.
 	for AD in $(oci iam availability-domain list -c "$C" --query 'data[].name' --raw-output | jq -r '.[]'); do
-		if oci compute instance launch -c "$C" --availability-domain "$AD" --shape "$SHAPE" --display-name "$NAME" \
-			--image-id "$IMAGE" --subnet-id "$SUBNET" --assign-public-ip true --user-data-file /tmp/user-data.sh \
-			--availability-config '{"recoveryAction":"RESTORE_INSTANCE"}' --wait-for-state RUNNING > /dev/null; then
+		if NEW=$(oci compute instance launch -c "$C" --availability-domain "$AD" --shape "$SHAPE" --display-name "$NAME" \
+			--image-id "$IMAGE" --subnet-id "$SUBNET" --assign-public-ip "$([ -n "$RIP" ] && echo false || echo true)" \
+			--user-data-file /tmp/user-data.sh --availability-config '{"recoveryAction":"RESTORE_INSTANCE"}' \
+			--wait-for-state RUNNING --query data.id --raw-output); then
 			echo "Launched in $AD. First boot takes ~${GRACE_MIN} minutes."
 			rm -f /tmp/user-data.sh
+			attach_ip "$NEW"
 			exit 0
 		fi
 	done
@@ -101,6 +122,8 @@ if ! HEALTH=$(curl -fsS --max-time 20 "$PUBLIC_URL/health"); then
 	exit 1
 fi
 echo "$HEALTH"
+# A VM from before the reserved IP gets it here, but never mid-stream: the move drops the site for a few minutes.
+if [ "$(jq '[.sources[] | select(.state == "live")] | length' <<< "$HEALTH")" = 0 ]; then attach_ip "$ID"; fi
 if [ "$(jq -r .ok <<< "$HEALTH")" != true ]; then
 	echo "A source needs attention (see above): the streamer gets the in-app popup; this failure emails you."
 	exit 1
