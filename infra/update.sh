@@ -17,7 +17,8 @@ DIR=$REL/$SHA
 OLD=$(readlink "$CUR" || true)
 [ "$OLD" = "$DIR" ] && exit 0
 [ -f "$DIR.failed" ] && exit 0 # tried and rolled back: wait for the next commit
-live() { [ "${1:-}" != force ] && health | grep -q '"state":"live"'; }
+# A commit message containing [deploy-now] skips the wait: for urgent fixes, accepting a few seconds of dropped chat.
+live() { [ "${1:-}" != force ] && ! git -C "$SRC" log -1 --format=%B "$SHA" | grep -qF "[deploy-now]" && health | grep -q '"state":"live"'; }
 if live "${1:-}"; then echo "$(date) $SHA waits: a stream is live"; exit 0; fi
 trap upload EXIT
 
