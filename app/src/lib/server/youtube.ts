@@ -44,6 +44,9 @@ export function toChatEvent(m: any): ChatEvent | undefined {
 	}
 }
 
+/** Milliseconds per 5-unit call that spreads what's left of today's quota (minus the reply reserve) over STREAM_HOURS. */
+const paceMs = () => ((STREAM_HOURS * 3600_000) / (Math.max(DAILY - REPLY_RESERVE - usedToday(), 5) / 5)) | 0;
+
 let liveChatId: string | undefined;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -69,6 +72,7 @@ async function streamChat(chatId: string) {
 	let failures = 0;
 	while (liveChatId === chatId) {
 		spend(5);
+		const opened = Date.now();
 		const offline = await new Promise<boolean>((done, fail) => {
 			const md = new grpc.Metadata();
 			md.set('x-goog-api-key', env.YOUTUBE_API_KEY!);
@@ -92,7 +96,9 @@ async function streamChat(chatId: string) {
 			return false;
 		});
 		if (offline) return;
-		await sleep(2000 * Math.max(failures, 1)); // never reconnect in a tight loop: each connection costs 5 units
+		// Each connection costs 5 units and YouTube may end streams early: a connection that lasted less than its
+		// share of the day's budget waits out the rest (pageToken resumes, so nothing is lost, only delayed).
+		await sleep(Math.max(2000 * Math.max(failures, 1), paceMs() - (Date.now() - opened)));
 	}
 }
 
@@ -112,9 +118,7 @@ async function readChat(chatId: string) {
 		}
 		if (res.offlineAt) return;
 		pageToken = res.nextPageToken;
-		const budget = Math.max(DAILY - REPLY_RESERVE - usedToday(), 5);
-		const floor = ((STREAM_HOURS * 3600_000) / (budget / 5)) | 0;
-		await sleep(Math.max(res.pollingIntervalMillis ?? 0, floor, 2000));
+		await sleep(Math.max(res.pollingIntervalMillis ?? 0, paceMs(), 2000));
 	}
 }
 
