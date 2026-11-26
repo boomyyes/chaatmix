@@ -141,3 +141,14 @@ describe('twitch emotes', () => {
 		expect(emoteParts({ fragments: [{ type: 'text', text: 'hi' }] })).toBeUndefined();
 	});
 });
+
+describe('youtube reply cap', () => {
+	it('counts replies separately from other spending', async () => {
+		const { spend, repliesToday, usedToday } = await import('./quota');
+		const [u, r] = [usedToday(), repliesToday()];
+		spend(5);
+		spend(20, true);
+		expect(usedToday() - u).toBe(25);
+		expect(repliesToday() - r).toBe(1);
+	});
+});

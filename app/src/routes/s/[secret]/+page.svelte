@@ -126,7 +126,7 @@
 			thanked.delete(key(e));
 			thanked = new Set(thanked);
 			startReply(e);
-			replyError = 'Thanks did not send. Try again or type a reply.';
+			replyError = (await res?.json().catch(() => undefined))?.error ?? 'Thanks did not send. Try again or type a reply.';
 		}
 	}
 

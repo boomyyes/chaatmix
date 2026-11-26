@@ -7,7 +7,7 @@ export type State = {
 	twitch?: Tokens & { userId: string; login: string };
 	google?: Tokens;
 	pins: ChatEvent[];
-	quota?: { day: string; used: number }; // YouTube units used today, so a reboot doesn't forget them
+	quota?: { day: string; used: number; replies?: number }; // YouTube units used today, so a reboot doesn't forget them
 };
 
 const FILE = env.STATE_FILE || 'state.json';

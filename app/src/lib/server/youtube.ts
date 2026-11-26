@@ -4,7 +4,7 @@ import * as protoLoader from '@grpc/proto-loader';
 import { env } from '#lib/server/env.ts';
 import type { ChatEvent } from '#lib/types.ts';
 import { publish, setStatus } from './hub';
-import { DAILY, spend, usedToday } from './quota';
+import { DAILY, repliesToday, spend, usedToday } from './quota';
 import { load, save } from './state';
 
 const API = 'https://www.googleapis.com/youtube/v3';
@@ -206,8 +206,11 @@ async function googleAccess() {
 export async function reply(author: string, text: string) {
 	if (!liveChatId) throw new Error('YouTube is not live.');
 	if (usedToday() > DAILY - 100) throw new Error('YouTube daily limit almost used up. Replies resume after midnight Pacific.');
+	// Capped at the reserve, so a busy day of replies can't eat the budget chat needs.
+	if ((repliesToday() + 1) * 20 > REPLY_RESERVE)
+		throw new Error(`Reply limit reached for today (${REPLY_RESERVE / 20} YouTube replies). Resets at midnight Pacific.`);
 	const messageText = text.startsWith('@') ? text : `@${author} ${text}`;
-	spend(20);
+	spend(20, true);
 	const res = await fetch(`${API}/liveChat/messages?part=snippet`, {
 		method: 'POST',
 		headers: { Authorization: `Bearer ${await googleAccess()}`, 'Content-Type': 'application/json' },
