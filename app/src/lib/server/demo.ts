@@ -12,7 +12,14 @@ const lines: Omit<ChatEvent, 'id' | 'ts'>[] = [
 	{ platform: 'youtube', kind: 'message', author: 'sana.k', text: 'the lighting looks so good today' },
 	{ platform: 'twitch', kind: 'cheer', author: 'okapi_ok', text: 'Cheer100 for the clutch', label: '100 BITS' },
 	{ platform: 'youtube', kind: 'message', author: 'arjun_08', text: 'what controller is that?' },
-	{ platform: 'twitch', kind: 'message', author: 'kxtsune', text: 'GG' }
+	{ platform: 'youtube', kind: 'message', author: 'nightbot', text: 'Thank you ❤❤ 🤣' },
+	{
+		platform: 'twitch',
+		kind: 'message',
+		author: 'kxtsune',
+		text: 'GG Kappa',
+		parts: [{ text: 'GG ' }, { text: 'Kappa', emote: 'https://static-cdn.jtvnw.net/emoticons/v2/25/static/dark/2.0' }]
+	}
 ];
 
 export function startDemo() {

@@ -112,6 +112,47 @@
 		}
 	}
 
+	// Neither platform's API has like or heart for chat, so "thanks" is a one-tap reply.
+	let thanked = $state(new Set<string>());
+	async function thank(e: ChatEvent) {
+		if (e.platform === 'youtube' && !data.youtubeReplies) return startReply(e); // shows the connect button
+		thanked.add(key(e));
+		thanked = new Set(thanked);
+		const res = await fetch(`${base}reply`, {
+			method: 'POST',
+			body: JSON.stringify({ platform: e.platform, messageId: e.id, author: e.author, text: `${e.platform === 'youtube' ? `@${e.author} ` : ''}thank you ❤️` })
+		}).catch(() => undefined);
+		if (!res?.ok) {
+			thanked.delete(key(e));
+			thanked = new Set(thanked);
+			startReply(e);
+			replyError = 'Thanks did not send. Try again or type a reply.';
+		}
+	}
+
+	// Pins sheet: slides in and out; drag the top bar down to close or shrink it, up to expand it.
+	let expanded = $state(false);
+	let dragY = $state(0);
+	let dragStart = $state<number | null>(null);
+	function dragDown(ev: PointerEvent) {
+		dragStart = ev.clientY;
+		(ev.currentTarget as HTMLElement).setPointerCapture(ev.pointerId);
+	}
+	function dragMove(ev: PointerEvent) {
+		if (dragStart !== null) dragY = Math.max(ev.clientY - dragStart, -240);
+	}
+	function dragEnd() {
+		if (dragStart === null) return;
+		if (dragY > 80) expanded ? (expanded = false) : closePins();
+		else if (dragY < -60) expanded = true;
+		dragStart = null;
+		dragY = 0;
+	}
+	function closePins() {
+		showPins = false;
+		expanded = false;
+	}
+
 	function cycleTextSize() {
 		textScale = textScale >= 1.3 ? 0.9 : Math.round((textScale + 0.2) * 10) / 10;
 		try {
@@ -157,6 +198,8 @@
 	/>
 </svelte:head>
 
+<svelte:window onkeydown={(ev) => ev.key === 'Escape' && showPins && closePins()} />
+
 {#snippet icon(p: Platform, size = 20)}
 	{#if p === 'youtube'}
 		<svg width={size} height={size} viewBox="0 0 20 20" role="img" aria-label="YouTube"><rect x="1" y="4" width="18" height="12" rx="3" fill="var(--yt)" /><path d="M8 7.2v5.6l4.8-2.8z" fill="var(--bg)" /></svg>
@@ -169,15 +212,24 @@
 	<svg width="20" height="20" viewBox="0 0 24 24" fill={filled ? 'currentColor' : 'none'} stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><path d="M9 3h6l-1 6 4 4H6l4-4z" /><path d="M12 13v8" stroke-linecap="round" /></svg>
 {/snippet}
 
+{#snippet words(e: ChatEvent)}
+	{#if e.parts}
+		{#each e.parts as p, i (i)}{#if p.emote}<img class="emote" src={p.emote} alt={p.text} title={p.text} loading="lazy" />{:else}{p.text}{/if}{/each}
+	{:else}{e.text}{/if}
+{/snippet}
+
 {#snippet paidCard(e: ChatEvent)}
 	<div class="paid">
 		{@render icon(e.platform)}
 		<div class="paid-body">
 			<span class="label">{e.label}</span>
 			<span class="paid-author">{e.author}</span>
-			{#if e.text}<span class="text">{e.text}</span>{/if}
+			{#if e.text}<span class="text">{@render words(e)}</span>{/if}
 		</div>
 		<div class="actions">
+			<button class="icon-btn heart" class:done={thanked.has(key(e))} aria-label="Thank {e.author}" aria-pressed={thanked.has(key(e))} disabled={thanked.has(key(e))} onclick={() => thank(e)}>
+				<svg width="20" height="20" viewBox="0 0 24 24" fill={thanked.has(key(e)) ? 'currentColor' : 'none'} stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><path d="M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10z" /></svg>
+			</button>
 			<button class="icon-btn" aria-label="{pinned.has(key(e)) ? 'Unpin' : 'Pin'} message from {e.author}" aria-pressed={pinned.has(key(e))} onclick={() => togglePin(e)}>
 				{@render pinIcon(pinned.has(key(e)))}
 			</button>
@@ -230,7 +282,7 @@
 						{@render icon(e.platform)}
 						<div class="msg-body">
 							<div class="msg-head"><span class="author">{e.author}</span><span class="age">{age(e.ts)}</span></div>
-							<button class="text as-text" onclick={() => startReply(e)} aria-label="Reply to {e.author}: {e.text}">{e.text}</button>
+							<button class="text as-text" onclick={() => startReply(e)} aria-label="Reply to {e.author}: {e.text}">{@render words(e)}</button>
 						</div>
 					</div>
 				{/if}
@@ -281,21 +333,36 @@
 		</form>
 	{/if}
 
-	{#if showPins}
-		<button class="scrim" aria-label="Close pinned messages" onclick={() => (showPins = false)}></button>
-		<div class="sheet" role="dialog" aria-label="Pinned messages">
+	<div class="scrim" class:open={showPins} aria-hidden="true"></div>
+	<div
+		class="sheet"
+		class:open={showPins}
+		class:expanded
+		class:dragging={dragStart !== null}
+		style:transform={showPins ? `translateY(${dragY}px)` : undefined}
+		role="dialog"
+		aria-label="Pinned messages"
+		inert={!showPins}
+	>
+		<!-- svelte-ignore a11y_no_static_element_interactions (drag is a touch shortcut; the close button and Escape cover keyboard and screen readers) -->
+		<div class="sheet-top" onpointerdown={dragDown} onpointermove={dragMove} onpointerup={dragEnd} onpointercancel={dragEnd}>
 			<div class="grabber" aria-hidden="true"></div>
 			<div class="sheet-head">
 				<h2>PINNED // {pins.length}</h2>
-				{#if pins.length}<button class="box-btn clear" onclick={clearPins}>CLEAR ALL</button>{/if}
+				{#if pins.length}<button class="box-btn clear" onpointerdown={(ev) => ev.stopPropagation()} onclick={clearPins}>CLEAR ALL</button>{/if}
+				<button class="icon-btn muted" aria-label="Close pinned messages" onpointerdown={(ev) => ev.stopPropagation()} onclick={closePins}>
+					<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
+				</button>
 			</div>
+		</div>
+		<div class="sheet-list">
 			{#each pins as p (key(p))}
 				{@render paidCard(p)}
 			{:else}
 				<p class="empty">Nothing pinned. Tap the pin on a Super Chat or sub to keep it here.</p>
 			{/each}
 		</div>
-	{/if}
+	</div>
 
 	<div class="sr-only" aria-live="polite">{announce}{issue ? ` ${issue.title}: ${issue.reason}` : ''}</div>
 	<div class="scanlines" aria-hidden="true"></div>
@@ -332,7 +399,8 @@
 		overflow: hidden;
 		background: var(--bg);
 		color: var(--text);
-		font-family: 'Atkinson Hyperlegible Next', system-ui, sans-serif;
+		font-family: 'Atkinson Hyperlegible Next', system-ui, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji';
+		font-variant-emoji: emoji; /* ❤ and friends in colour, not tinted the text green */
 	}
 	button {
 		font: inherit;
@@ -687,8 +755,13 @@
 		position: absolute;
 		inset: 0;
 		z-index: 5;
-		border: 0;
 		background: rgb(0 0 0 / 0.6);
+		opacity: 0;
+		pointer-events: none;
+		transition: opacity 0.28s ease;
+	}
+	.scrim.open {
+		opacity: 1;
 	}
 	.sheet {
 		position: absolute;
@@ -696,21 +769,82 @@
 		right: 0;
 		bottom: 0;
 		z-index: 6;
-		max-height: 75%;
-		overflow-y: auto;
-		padding: 10px 0 max(env(safe-area-inset-bottom), 24px);
+		height: 60%;
 		display: flex;
 		flex-direction: column;
-		gap: 6px;
 		background: var(--surface);
 		border-top: 1px solid var(--accent);
 		box-shadow: 0 -8px 30px rgb(51 255 102 / 0.25);
+		transform: translateY(110%);
+		transition:
+			transform 0.32s cubic-bezier(0.2, 0.9, 0.3, 1),
+			height 0.32s cubic-bezier(0.2, 0.9, 0.3, 1);
+	}
+	.sheet.expanded {
+		height: 92%;
+	}
+	.sheet.dragging {
+		transition: none;
+	}
+	.sheet-top {
+		padding-top: 10px;
+		touch-action: none; /* the drag is ours, not the page's scroll */
+		cursor: grab;
+	}
+	.sheet-list {
+		flex: 1;
+		overflow-y: auto;
+		overscroll-behavior: contain;
+		padding-bottom: max(env(safe-area-inset-bottom), 24px);
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
 	}
 	.grabber {
-		align-self: center;
-		width: 40px;
-		height: 4px;
+		margin: 0 auto 6px;
+		width: 48px;
+		height: 5px;
 		background: var(--accent);
+	}
+	.emote {
+		height: 1.6em;
+		vertical-align: middle;
+		margin: -0.3em 0.1em;
+	}
+	.heart.done {
+		color: var(--yt);
+	}
+	.heart:not(.done):active svg {
+		transform: scale(1.3);
+	}
+	/* new messages slide in; paid ones flash once */
+	.msg,
+	.paid {
+		animation: arrive 0.25s ease-out;
+	}
+	.feed .paid {
+		animation:
+			arrive 0.25s ease-out,
+			flash 1.2s ease-out;
+	}
+	.chip.is-live :global(svg) {
+		animation: pulse 2s ease-in-out infinite;
+	}
+	@keyframes arrive {
+		from {
+			opacity: 0;
+			transform: translateY(8px);
+		}
+	}
+	@keyframes flash {
+		0% {
+			box-shadow: 0 0 40px rgb(255 43 214 / 0.9);
+		}
+	}
+	@keyframes pulse {
+		50% {
+			opacity: 0.45;
+		}
 	}
 	.sheet-head {
 		display: flex;
@@ -744,8 +878,16 @@
 		}
 	}
 	@media (prefers-reduced-motion: reduce) {
-		.cursor {
+		.cursor,
+		.msg,
+		.paid,
+		.feed .paid,
+		.chip.is-live :global(svg) {
 			animation: none;
+		}
+		.sheet,
+		.scrim {
+			transition: none;
 		}
 	}
 </style>

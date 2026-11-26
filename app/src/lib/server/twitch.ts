@@ -58,15 +58,27 @@ function needsReconnect(reason: string) {
 }
 
 /** Map an EventSub notification to a ChatEvent, or undefined for events we don't show. */
+/** EventSub message fragments -> text and emote images; undefined when there are no emotes (plain text is enough). */
+export function emoteParts(message: any): ChatEvent['parts'] {
+	const f: any[] = message?.fragments ?? [];
+	if (!f.some((x) => x.type === 'emote')) return undefined;
+	return f.map((x) =>
+		x.type === 'emote' && x.emote?.id
+			? { text: x.text, emote: `https://static-cdn.jtvnw.net/emoticons/v2/${x.emote.id}/${x.emote.format?.includes('animated') ? 'animated' : 'static'}/dark/2.0` }
+			: { text: x.text }
+	);
+}
+
 export function toChatEvent(type: string, e: any, id: string, ts: string): ChatEvent | undefined {
 	const base = { id, platform: 'twitch' as const, ts };
-	if (type === 'channel.chat.message') return { ...base, id: e.message_id, kind: 'message', author: e.chatter_user_name, text: e.message.text };
+	if (type === 'channel.chat.message')
+		return { ...base, id: e.message_id, kind: 'message', author: e.chatter_user_name, text: e.message.text, parts: emoteParts(e.message) };
 	if (type === 'channel.cheer')
 		return { ...base, kind: 'cheer', author: e.is_anonymous ? 'Anonymous' : e.user_name, text: e.message ?? '', label: `${e.bits} BITS` };
 	if (type !== 'channel.chat.notification') return undefined;
 	const author = e.chatter_is_anonymous ? 'Anonymous' : e.chatter_user_name;
 	const text = e.message?.text || e.system_message || '';
-	const n = { ...base, id: e.message_id ?? id, author, text };
+	const n = { ...base, id: e.message_id ?? id, author, text, parts: e.message?.text ? emoteParts(e.message) : undefined };
 	switch (e.notice_type) {
 		case 'sub': return { ...n, kind: 'sub', label: `SUB · TIER ${Number(e.sub?.sub_tier ?? 1000) / 1000}` };
 		case 'resub': return { ...n, kind: 'resub', label: `RESUB · ${e.resub?.cumulative_months ?? '?'} MONTHS` };

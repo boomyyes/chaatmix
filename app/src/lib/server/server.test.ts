@@ -3,7 +3,7 @@ import type { Cookies } from '@sveltejs/kit';
 import { flush, publish, since } from './hub';
 import { consumeState, issueState } from './oauth';
 import { load, save } from './state';
-import { shouldRestart, toChatEvent as twitchEvent } from './twitch';
+import { emoteParts, shouldRestart, toChatEvent as twitchEvent } from './twitch';
 import { restType, toChatEvent as youtubeEvent } from './youtube';
 
 describe('youtube push stream', () => {
@@ -121,5 +121,23 @@ describe('event mapping', () => {
 		});
 		expect(twitchEvent('channel.cheer', { bits: 100, user_name: 'o', message: 'Cheer100' }, 'c1', t(1))).toMatchObject({ kind: 'cheer', label: '100 BITS', id: 'c1' });
 		expect(twitchEvent('channel.chat.notification', { notice_type: 'announcement' }, 'y', t(1))).toBeUndefined();
+	});
+});
+
+describe('twitch emotes', () => {
+	it('turns emote fragments into image URLs, and leaves plain text alone', () => {
+		const parts = emoteParts({
+			fragments: [
+				{ type: 'text', text: 'gg ' },
+				{ type: 'emote', text: 'Kappa', emote: { id: '25', format: ['static'] } },
+				{ type: 'emote', text: 'catJAM', emote: { id: 'emotesv2_x', format: ['static', 'animated'] } }
+			]
+		});
+		expect(parts).toEqual([
+			{ text: 'gg ' },
+			{ text: 'Kappa', emote: 'https://static-cdn.jtvnw.net/emoticons/v2/25/static/dark/2.0' },
+			{ text: 'catJAM', emote: 'https://static-cdn.jtvnw.net/emoticons/v2/emotesv2_x/animated/dark/2.0' }
+		]);
+		expect(emoteParts({ fragments: [{ type: 'text', text: 'hi' }] })).toBeUndefined();
 	});
 });
